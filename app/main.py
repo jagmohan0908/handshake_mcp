@@ -205,7 +205,31 @@ def frappe_headers() -> dict[str, str]:
         auth = f"token {api_key}:{api_secret}"
     if auth and not auth.lower().startswith(("token ", "bearer ")):
         auth = f"token {auth}"
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    user_agent = os.getenv(
+        "FRAPPE_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36",
+    )
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": os.getenv("FRAPPE_ACCEPT_LANGUAGE", "en-US,en;q=0.9"),
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "Origin": os.getenv("FRAPPE_ORIGIN", frappe_base_url()),
+        "Pragma": "no-cache",
+        "Referer": os.getenv("FRAPPE_REFERER", f"{frappe_base_url()}/"),
+        "User-Agent": user_agent,
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    extra_headers = os.getenv("FRAPPE_EXTRA_HEADERS_JSON", "").strip()
+    if extra_headers:
+        try:
+            parsed_headers = json.loads(extra_headers)
+            if isinstance(parsed_headers, dict):
+                headers.update({str(k): str(v) for k, v in parsed_headers.items()})
+        except json.JSONDecodeError:
+            log_event("frappe_header_config_error", error="FRAPPE_EXTRA_HEADERS_JSON is not valid JSON")
     if auth:
         headers["Authorization"] = auth
     return headers
@@ -229,6 +253,14 @@ def frappe_request(method: str, path: str, *, json_body: dict[str, Any] | None =
             data = json.loads(text) if text else {}
     except HTTPError as exc:
         text = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 403 and ("error_code\":1010" in text or "browser_signature_banned" in text):
+            raise FrappeError(
+                "Cloudflare 1010 blocked the MCP server while calling Frappe. "
+                "Allowlist the Render outbound traffic/service, relax Cloudflare Bot Fight/BIC rules for API paths, "
+                "or add a server-to-server bypass rule for Authorization-token requests. "
+                f"Raw: {text[:700]}",
+                exc.code,
+            ) from exc
         raise FrappeError(text[:1000], exc.code) from exc
     except URLError as exc:
         raise FrappeError(str(exc), None) from exc
