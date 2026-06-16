@@ -182,6 +182,52 @@ def env_json_object(name: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def whatsapp_config_from_raw(raw_config: Any) -> dict[str, str]:
+    if isinstance(raw_config, dict):
+        return {
+            "profile_key": str(raw_config.get("profile_key") or raw_config.get("profileKey") or "").strip(),
+            "channel_account": str(raw_config.get("channel_account") or raw_config.get("channel") or "").strip(),
+            "template_name": str(raw_config.get("template_name") or raw_config.get("template") or "").strip(),
+            "language_code": str(raw_config.get("language_code") or raw_config.get("language") or "").strip(),
+        }
+    if raw_config:
+        return {"profile_key": "", "channel_account": str(raw_config).strip(), "template_name": "", "language_code": ""}
+    return {"profile_key": "", "channel_account": "", "template_name": "", "language_code": ""}
+
+
+def did_lookup_keys(did_number: str) -> list[str]:
+    normalized = normalize_phone(did_number)
+    keys = [did_number, normalized, normalized.removeprefix("+")]
+    if normalized:
+        keys.append(normalized[-10:])
+    seen: set[str] = set()
+    unique_keys = []
+    for key in keys:
+        if key and key not in seen:
+            unique_keys.append(key)
+            seen.add(key)
+    return unique_keys
+
+
+def did_whatsapp_config(args: dict[str, Any]) -> dict[str, str]:
+    did_number = did_number_from_args(args)
+    did_configs = env_json_object("WA_CHANNEL_ACCOUNTS_BY_DID_JSON")
+    for key in did_lookup_keys(did_number):
+        raw_config = did_configs.get(key)
+        if raw_config:
+            config = whatsapp_config_from_raw(raw_config)
+            log_event(
+                "whatsapp_did_config_applied",
+                did_number=did_number,
+                did_key=key,
+                profile_key=config.get("profile_key") or None,
+                channel_account=config.get("channel_account") or None,
+                template_name=config.get("template_name") or None,
+            )
+            return config
+    return {"profile_key": "", "channel_account": "", "template_name": "", "language_code": ""}
+
+
 def resolve_profile_key_for_request(args: dict[str, Any]) -> str:
     requested_profile_key = profile_key_from_args(args)
     did_number = did_number_from_args(args)
@@ -224,15 +270,16 @@ def resolve_profile_key_for_request(args: dict[str, Any]) -> str:
 def profile_whatsapp_config(profile_key: str) -> dict[str, str]:
     profile_configs = env_json_object("WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON")
     raw_config = profile_configs.get(profile_key) if profile_key else None
-    if isinstance(raw_config, dict):
-        return {
-            "channel_account": str(raw_config.get("channel_account") or raw_config.get("channel") or "").strip(),
-            "template_name": str(raw_config.get("template_name") or raw_config.get("template") or "").strip(),
-            "language_code": str(raw_config.get("language_code") or raw_config.get("language") or "").strip(),
-        }
-    if raw_config:
-        return {"channel_account": str(raw_config).strip(), "template_name": "", "language_code": ""}
-    return {"channel_account": "", "template_name": "", "language_code": ""}
+    return whatsapp_config_from_raw(raw_config)
+
+
+def merge_whatsapp_config(base_config: dict[str, str], override_config: dict[str, str]) -> dict[str, str]:
+    return {
+        "profile_key": override_config.get("profile_key") or base_config.get("profile_key", ""),
+        "channel_account": override_config.get("channel_account") or base_config.get("channel_account", ""),
+        "template_name": override_config.get("template_name") or base_config.get("template_name", ""),
+        "language_code": override_config.get("language_code") or base_config.get("language_code", ""),
+    }
 
 
 def channel_account_for_request(args: dict[str, Any], profile_config: dict[str, str]) -> str:
@@ -447,11 +494,12 @@ def send_whatsapp_template(args: dict[str, Any]) -> dict[str, Any]:
         return {"status": "failed", "error": "phone is required"}
     if not message:
         return {"status": "failed", "error": "message is required"}
-    profile_key = resolve_profile_key_for_request(args)
-    profile_config = profile_whatsapp_config(profile_key)
+    did_config = did_whatsapp_config(args)
+    profile_key = did_config.get("profile_key") or resolve_profile_key_for_request(args)
+    profile_config = merge_whatsapp_config(profile_whatsapp_config(profile_key), did_config)
     template_name = template_name_for_request(args, profile_config)
     channel_account = channel_account_for_request(args, profile_config)
-    language_code = args.get("language_code") or profile_config.get("language_code") or os.getenv("WA_DEFAULT_LANGUAGE", "en")
+    language_code = profile_config.get("language_code") or args.get("language_code") or os.getenv("WA_DEFAULT_LANGUAGE", "en")
     if not template_name:
         return {"status": "failed", "error": f"template_name is required for profile: {profile_key or 'unknown'}"}
     if not channel_account:

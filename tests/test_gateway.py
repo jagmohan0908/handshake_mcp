@@ -240,6 +240,74 @@ def test_did_profile_lookup_overrides_wrong_request_profile(monkeypatch):
     assert captured["template_body"]["template_name"] == "vobiz_seedfit_pg"
 
 
+def test_did_whatsapp_mapping_overrides_profile_channel(monkeypatch):
+    init_db()
+    captured = {}
+    monkeypatch.setenv(
+        "WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON",
+        json.dumps(
+            {
+                "siya-agent": {
+                    "channel_account": "sriaas-test",
+                    "template_name": "vobiz_ai",
+                    "language_code": "en",
+                }
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "WA_CHANNEL_ACCOUNTS_BY_DID_JSON",
+        json.dumps(
+            {
+                "+919262171462": {
+                    "profile_key": "siya-agent",
+                    "channel_account": "siya-interakt",
+                    "template_name": "vobiz_siya",
+                    "language_code": "en",
+                }
+            }
+        ),
+    )
+
+    def fake_resolve_conversation(phone, channel):
+        captured["channel"] = channel
+        return "conversation-1"
+
+    monkeypatch.setattr(gateway, "resolve_or_create_conversation", fake_resolve_conversation)
+
+    def fake_frappe_request(method, path, *, json_body=None, params=None):
+        captured["template_body"] = json_body
+        return {
+            "message": {
+                "conversation": "conversation-1",
+                "sent": True,
+                "delivery_status": "Sent",
+            }
+        }
+
+    monkeypatch.setattr(gateway, "frappe_request", fake_frappe_request)
+
+    result = send_whatsapp_template(
+        {
+            "profile_key": "siya-agent",
+            "did_number": "+919262171462",
+            "phone": "+919873090386",
+            "message": "Address",
+            "body_values": ["Address"],
+            "agent_id": "agent",
+            "call_id": "call-did-whatsapp-mapping",
+            "idempotency_key": "key-did-whatsapp-mapping",
+        }
+    )
+
+    assert result["status"] == "sent"
+    assert result["profile_key"] == "siya-agent"
+    assert result["channel_account"] == "siya-interakt"
+    assert result["template_name"] == "vobiz_siya"
+    assert captured["channel"] == "siya-interakt"
+    assert captured["template_body"]["template_name"] == "vobiz_siya"
+
+
 def test_frappe_non_json_response_raises_frappe_error(monkeypatch):
     class FakeResponse:
         def __enter__(self):

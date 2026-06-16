@@ -26,6 +26,7 @@ Set these in `.env`:
 - `FRAPPE_BASE_URL`
 - `FRAPPE_AUTHORIZATION`
 - `WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON`
+- `WA_CHANNEL_ACCOUNTS_BY_DID_JSON`
 
 ## Agent Endpoint
 
@@ -85,6 +86,12 @@ To route WhatsApp sends by voice profile, set both the WhatsApp channel account 
 WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON={"male-kamal-sriaas":{"channel_account":"Interakt SRIAAS Male","template_name":"vobiz_ai","language_code":"en"},"female-megha-sriaas":{"channel_account":"Interakt SRIAAS Female","template_name":"vobiz_ai_female","language_code":"en"}}
 ```
 
-When `profile_key` matches `WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON`, that profile mapping wins for `channel_account` and `template_name`. Request values are only used as fallback when the matching profile does not define that field. Without a mapped or explicit channel/template, the send is rejected.
+To force routing by the called DID/phone number, set `WA_CHANNEL_ACCOUNTS_BY_DID_JSON`. DID mapping wins over profile mapping:
+
+```text
+WA_CHANNEL_ACCOUNTS_BY_DID_JSON={"+919262171462":{"profile_key":"siya-agent","channel_account":"siya-interakt","template_name":"vobiz_siya","language_code":"en"},"+919262171487":{"profile_key":"seedfit-agent","channel_account":"seedfit-interakt","template_name":"vobiz_seedfit_pg","language_code":"en"}}
+```
+
+When `did_number` matches `WA_CHANNEL_ACCOUNTS_BY_DID_JSON`, that DID mapping wins for `profile_key`, `channel_account`, and `template_name`. Otherwise, when `profile_key` matches `WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON`, that profile mapping wins for `channel_account` and `template_name`. Request values are only used as fallback when the matching config does not define that field. Without a mapped or explicit channel/template, the send is rejected.
 
 If `did_number` is included, MCP first asks Frappe's voice-agent config API to resolve the true profile for that DID, then uses that resolved profile for WhatsApp routing.
