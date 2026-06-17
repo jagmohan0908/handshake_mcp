@@ -367,6 +367,71 @@ def test_wrong_channel_resolved_conversation_is_not_used(monkeypatch):
     assert captured["template_body"]["conversation"] == "224"
 
 
+def test_wrong_contact_resolved_conversation_is_not_used(monkeypatch):
+    init_db()
+    captured = {"created_conversations": []}
+    monkeypatch.setenv(
+        "WA_CHANNEL_ACCOUNTS_BY_DID_JSON",
+        json.dumps(
+            {
+                "+919262171492": {
+                    "profile_key": "Vobiz-parkinson",
+                    "channel_account": "SRIAAS Parkinsons",
+                    "template_name": "vobiz_park",
+                    "language_code": "en",
+                }
+            }
+        ),
+    )
+
+    def fake_frappe_request(method, path, *, json_body=None, params=None):
+        if path.endswith("/wa_chat_hub.api.chat.resolve_chat_for_reference"):
+            return {"message": {"conversation": "47239"}}
+        if path == "/api/resource/Chat%20Conversation/47239":
+            return {"data": {"name": "47239", "channel_account": "SRIAAS Parkinsons", "contact": "contact-wrong"}}
+        if path == "/api/resource/Chat%20Contact/contact-wrong":
+            return {"data": {"name": "contact-wrong", "phone_number": "+919999990000"}}
+        if method == "POST" and path == "/api/resource/Chat%20Contact":
+            captured["created_contact"] = json_body
+            return {"data": {"name": "contact-correct"}}
+        if method == "POST" and path == "/api/resource/Chat%20Conversation":
+            captured["created_conversations"].append(json_body)
+            return {"data": {"name": "47240"}}
+        if path.endswith("/wa_chat_hub.api.runtime.send_template_message"):
+            captured["template_body"] = json_body
+            return {
+                "message": {
+                    "conversation": json_body["conversation"],
+                    "sent": True,
+                    "delivery_status": "Sent",
+                }
+            }
+        raise AssertionError(f"Unexpected request {method} {path}")
+
+    monkeypatch.setattr(gateway, "frappe_request", fake_frappe_request)
+
+    result = send_whatsapp_template(
+        {
+            "profile_key": "Vobiz-parkinson",
+            "did_number": "+919262171492",
+            "phone": "+919873090498",
+            "message": "Address",
+            "body_values": ["Address"],
+            "agent_id": "agent",
+            "call_id": "call-wrong-contact-conversation",
+            "idempotency_key": "key-wrong-contact-conversation",
+        }
+    )
+
+    assert result["status"] == "sent"
+    assert result["conversation"] == "47240"
+    assert captured["created_contact"] == {"phone_number": "+919873090498", "display_name": "+919873090498"}
+    assert captured["created_conversations"] == [
+        {"channel_account": "SRIAAS Parkinsons", "contact": "contact-correct", "status": "Open"}
+    ]
+    assert captured["template_body"]["conversation"] == "47240"
+
+
 def test_frappe_non_json_response_raises_frappe_error(monkeypatch):
     class FakeResponse:
         def __enter__(self):

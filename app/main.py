@@ -441,6 +441,50 @@ def same_channel(left: str | None, right: str | None) -> bool:
     return str(left or "").strip().lower() == str(right or "").strip().lower()
 
 
+def chat_contact_detail(contact: str) -> dict[str, Any]:
+    if not contact:
+        return {}
+    try:
+        data = frappe_request("GET", f"/api/resource/Chat%20Contact/{quote(str(contact), safe='')}")
+    except FrappeError as exc:
+        log_event(
+            "contact_detail_lookup_failed",
+            contact=contact,
+            error=str(exc)[:300],
+        )
+        return {}
+    detail = data.get("data") if isinstance(data, dict) else {}
+    return detail if isinstance(detail, dict) else {}
+
+
+def contact_phone_candidates(contact_detail: dict[str, Any], contact_name: str = "") -> list[str]:
+    values = [
+        contact_detail.get("phone_number"),
+        contact_detail.get("mobile_no"),
+        contact_detail.get("mobile"),
+        contact_detail.get("phone"),
+        contact_detail.get("whatsapp_number"),
+        contact_detail.get("name"),
+        contact_name,
+    ]
+    seen: set[str] = set()
+    phones = []
+    for value in values:
+        phone = normalize_phone(str(value or ""))
+        if phone and phone not in seen:
+            phones.append(phone)
+            seen.add(phone)
+    return phones
+
+
+def same_phone(left: str | None, right: str | None) -> bool:
+    left_phone = normalize_phone(str(left or ""))
+    right_phone = normalize_phone(str(right or ""))
+    if not left_phone or not right_phone:
+        return False
+    return left_phone == right_phone or left_phone[-10:] == right_phone[-10:]
+
+
 def create_conversation_for_channel(contact_name: str, phone: str, channel_account: str) -> str:
     contact = contact_name
     if not contact:
@@ -483,15 +527,39 @@ def resolve_or_create_conversation(phone: str, channel_account: str) -> str:
             detail = chat_conversation_detail(str(conversation))
             actual_channel = detail.get("channel_account") or result.get("channel_account")
             fallback_contact = str(detail.get("contact") or result.get("contact") or fallback_contact or "").strip()
-            if same_channel(actual_channel, channel_account):
+            if not same_channel(actual_channel, channel_account):
+                log_event(
+                    "conversation_channel_mismatch",
+                    conversation=conversation,
+                    expected_channel=channel_account,
+                    actual_channel=actual_channel or None,
+                    contact=fallback_contact or None,
+                )
+                continue
+
+            contact_detail = chat_contact_detail(fallback_contact)
+            contact_phones = contact_phone_candidates(contact_detail, fallback_contact)
+            phone_matches = any(same_phone(cleaned or phone, contact_phone) for contact_phone in contact_phones)
+            if phone_matches or not contact_phones:
+                log_event(
+                    "conversation_resolved_for_channel",
+                    conversation=conversation,
+                    channel_account=channel_account,
+                    contact=fallback_contact or None,
+                    contact_phone_suffix=(contact_phones[0][-4:] if contact_phones else None),
+                    requested_phone_suffix=(cleaned or phone)[-4:],
+                )
                 return str(conversation)
-            log_event(
-                "conversation_channel_mismatch",
-                conversation=conversation,
-                expected_channel=channel_account,
-                actual_channel=actual_channel or None,
-                contact=fallback_contact or None,
-            )
+            if contact_phones and not phone_matches:
+                log_event(
+                    "conversation_contact_mismatch",
+                    conversation=conversation,
+                    channel_account=channel_account,
+                    contact=fallback_contact or None,
+                    contact_phone_suffixes=[contact_phone[-4:] for contact_phone in contact_phones],
+                    requested_phone_suffix=(cleaned or phone)[-4:],
+                )
+                fallback_contact = ""
 
     return create_conversation_for_channel(fallback_contact, cleaned or phone, channel_account)
 
