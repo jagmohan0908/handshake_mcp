@@ -529,7 +529,7 @@ def test_whatsapp_message_uses_free_text_method(monkeypatch):
         "WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON",
         json.dumps({"followup-profile": {"channel_account": "Interakt Followup", "template_name": "vobiz_ai"}}),
     )
-    monkeypatch.setenv("WA_SEND_MESSAGE_METHOD", "wa_chat_hub.api.runtime.send_reply")
+    monkeypatch.setenv("WA_SEND_MESSAGE_METHOD", "wa_chat_hub.api.runtime.send_message")
     monkeypatch.setattr(gateway, "resolve_or_create_conversation", lambda phone, channel: "conversation-2")
 
     def fake_frappe_request(method, path, *, json_body=None, params=None):
@@ -553,5 +553,5 @@ def test_whatsapp_message_uses_free_text_method(monkeypatch):
 
     assert result["status"] == "sent"
     assert result["channel_account"] == "Interakt Followup"
-    assert captured["path"] == "/api/method/wa_chat_hub.api.runtime.send_reply"
+    assert captured["path"] == "/api/method/wa_chat_hub.api.runtime.send_message"
     assert captured["body"]["message"] == "Second follow-up text"
