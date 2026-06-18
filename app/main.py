@@ -150,7 +150,8 @@ def idempotency_set(key: str | None, result: dict[str, Any]) -> None:
 
 def limit_for_action(action: str) -> int:
     return {
-        "whatsapp": env_int("MCP_MAX_WHATSAPP_SENDS_PER_CALL", 1),
+        "whatsapp": env_int("MCP_MAX_WHATSAPP_SENDS_PER_CALL", 5),
+        "whatsapp_template": env_int("MCP_MAX_WHATSAPP_TEMPLATES_PER_CALL", 1),
     }.get(action, 1)
 
 
@@ -716,10 +717,94 @@ def send_whatsapp_template(args: dict[str, Any]) -> dict[str, Any]:
             "frappe_result": result,
         }
 
+    return guarded_write("whatsapp_template", {**args, "phone": phone}, write)
+
+
+def send_whatsapp_message(args: dict[str, Any]) -> dict[str, Any]:
+    phone = normalize_phone(args.get("phone"))
+    message = str(args.get("message") or "").strip()
+    if not phone:
+        return {"status": "failed", "error": "phone is required"}
+    if not message:
+        return {"status": "failed", "error": "message is required"}
+    did_config = did_whatsapp_config(args)
+    profile_key = did_config.get("profile_key") or resolve_profile_key_for_request(args)
+    profile_config = merge_whatsapp_config(profile_whatsapp_config(profile_key), did_config)
+    channel_account = channel_account_for_request(args, profile_config)
+    if not channel_account:
+        return {"status": "failed", "error": f"channel_account is required for profile: {profile_key or 'unknown'}"}
+
+    def write() -> dict[str, Any]:
+        conversation = resolve_or_create_conversation(phone, str(channel_account))
+        recipient_info = conversation_recipient_info(conversation, phone)
+        log_event(
+            "whatsapp_message_request",
+            profile_key=profile_key,
+            phone_suffix=phone[-4:],
+            requested_recipient_phone=recipient_info.get("requested_recipient_phone"),
+            conversation_contact=recipient_info.get("conversation_contact"),
+            conversation_contact_phone=recipient_info.get("conversation_contact_phone"),
+            conversation_contact_phone_matches=recipient_info.get("conversation_contact_phone_matches"),
+            conversation=conversation,
+            channel_account=channel_account,
+            message_len=len(message),
+            idempotency_key=args.get("idempotency_key"),
+        )
+        method = os.getenv("WA_SEND_MESSAGE_METHOD", "wa_chat_hub.api.runtime.send_message").strip().strip("/")
+        data = frappe_request(
+            "POST",
+            f"/api/method/{method}",
+            json_body={
+                "conversation": conversation,
+                "message": message,
+                "content": message,
+                "body": message,
+            },
+        )
+        result = unwrap_result(data)
+        sent_value = result.get("sent")
+        delivery_status = str(result.get("status") or result.get("delivery_status") or "").lower()
+        error_message = result.get("error")
+        if sent_value is True or delivery_status in {"sent", "success", "delivered"}:
+            status = "sent"
+        elif sent_value is False or delivery_status in {"failed", "error", "rejected"} or error_message:
+            status = "failed"
+        else:
+            status = "accepted"
+        if status != "sent":
+            log_event(
+                "whatsapp_message_not_confirmed_sent",
+                profile_key=profile_key,
+                phone_suffix=phone[-4:],
+                conversation=result.get("conversation") or conversation,
+                channel_account=channel_account,
+                sent=sent_value,
+                delivery_status=delivery_status,
+                error=error_message,
+                frappe_result=json.dumps(result, default=str)[:1000],
+                idempotency_key=args.get("idempotency_key"),
+            )
+        return {
+            "status": status,
+            "conversation": result.get("conversation") or conversation,
+            "message": result.get("message"),
+            "profile_key": profile_key or None,
+            "channel_account": channel_account,
+            "requested_recipient_phone": recipient_info.get("requested_recipient_phone"),
+            "conversation_contact": recipient_info.get("conversation_contact"),
+            "conversation_contact_phone": recipient_info.get("conversation_contact_phone"),
+            "conversation_contact_phone_matches": recipient_info.get("conversation_contact_phone_matches"),
+            "delivery_status": delivery_status or None,
+            "sent": sent_value,
+            "error": error_message,
+            "frappe_result": result,
+        }
+
     return guarded_write("whatsapp", {**args, "phone": phone}, write)
 
 
 TOOLS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "send_whatsapp_message": send_whatsapp_message,
     "send_whatsapp_template": send_whatsapp_template,
 }
 

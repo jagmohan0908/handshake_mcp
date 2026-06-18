@@ -5,11 +5,11 @@ os.environ.setdefault("MCP_BEARER_TOKEN", "test-token")
 os.environ.setdefault("MCP_DB_PATH", "data/test_gateway.sqlite3")
 
 import app.main as gateway  # noqa: E402
-from app.main import init_db, normalize_phone, send_whatsapp_template  # noqa: E402
+from app.main import init_db, normalize_phone, send_whatsapp_message, send_whatsapp_template  # noqa: E402
 
 
-def test_gateway_exposes_only_whatsapp_tool():
-    assert sorted(gateway.TOOLS) == ["send_whatsapp_template"]
+def test_gateway_exposes_only_whatsapp_tools():
+    assert sorted(gateway.TOOLS) == ["send_whatsapp_message", "send_whatsapp_template"]
 
 
 def test_normalize_india_phone():
@@ -482,3 +482,38 @@ def test_whatsapp_rejects_missing_profile_template_and_channel(monkeypatch):
 
     assert result["status"] == "failed"
     assert "template_name is required" in result["error"]
+
+
+def test_whatsapp_message_uses_free_text_method(monkeypatch):
+    init_db()
+    captured = {}
+    monkeypatch.setenv(
+        "WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON",
+        json.dumps({"followup-profile": {"channel_account": "Interakt Followup", "template_name": "vobiz_ai"}}),
+    )
+    monkeypatch.setenv("WA_SEND_MESSAGE_METHOD", "wa_chat_hub.api.runtime.send_message")
+    monkeypatch.setattr(gateway, "resolve_or_create_conversation", lambda phone, channel: "conversation-2")
+
+    def fake_frappe_request(method, path, *, json_body=None, params=None):
+        captured["method"] = method
+        captured["path"] = path
+        captured["body"] = json_body
+        return {"message": {"conversation": "conversation-2", "sent": True, "delivery_status": "Sent"}}
+
+    monkeypatch.setattr(gateway, "frappe_request", fake_frappe_request)
+
+    result = send_whatsapp_message(
+        {
+            "profile_key": "followup-profile",
+            "phone": "+919999999999",
+            "message": "Second follow-up text",
+            "agent_id": "agent",
+            "call_id": "call-free-text",
+            "idempotency_key": "key-free-text",
+        }
+    )
+
+    assert result["status"] == "sent"
+    assert result["channel_account"] == "Interakt Followup"
+    assert captured["path"] == "/api/method/wa_chat_hub.api.runtime.send_message"
+    assert captured["body"]["message"] == "Second follow-up text"
