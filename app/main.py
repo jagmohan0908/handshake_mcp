@@ -761,7 +761,7 @@ def send_whatsapp_message(args: dict[str, Any]) -> dict[str, Any]:
             message_len=len(message),
             idempotency_key=args.get("idempotency_key"),
         )
-        method = os.getenv("WA_SEND_MESSAGE_METHOD", "wa_chat_hub.api.runtime.send_message").strip().strip("/")
+        method = os.getenv("WA_SEND_MESSAGE_METHOD", "wa_chat_hub.api.runtime.send_reply").strip().strip("/")
         data = frappe_request(
             "POST",
             f"/api/method/{method}",
