@@ -1,11 +1,18 @@
 import os
 import json
 
+import pytest
+
 os.environ.setdefault("MCP_BEARER_TOKEN", "test-token")
 os.environ.setdefault("MCP_DB_PATH", "data/test_gateway.sqlite3")
 
 import app.main as gateway  # noqa: E402
 from app.main import init_db, normalize_phone, send_whatsapp_message, send_whatsapp_template  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def isolated_gateway_db(monkeypatch, tmp_path):
+    monkeypatch.setenv("MCP_DB_PATH", str(tmp_path / "gateway.sqlite3"))
 
 
 def test_gateway_exposes_only_whatsapp_tools():
