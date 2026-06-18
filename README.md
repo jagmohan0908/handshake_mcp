@@ -7,8 +7,9 @@ Agents call this service through JSON-RPC `tools/call`. This service owns Frappe
 ## Tools
 
 - `send_whatsapp_template`
+- `send_whatsapp_message`
 
-The gateway intentionally exposes only the WhatsApp template sending tool instead of broad Frappe CRUD write access.
+The gateway intentionally exposes only guarded WhatsApp sending tools instead of broad Frappe CRUD write access.
 
 ## Run Locally
 
@@ -24,9 +25,17 @@ Set these in `.env`:
 
 - `MCP_BEARER_TOKEN`
 - `FRAPPE_BASE_URL`
-- `FRAPPE_AUTHORIZATION`
+- `FRAPPE_AUTHORIZATION` or `FRAPPE_API_KEY` + `FRAPPE_API_SECRET`
 - `WA_CHANNEL_ACCOUNTS_BY_PROFILE_JSON`
 - `WA_CHANNEL_ACCOUNTS_BY_DID_JSON`
+
+Frappe token auth must be exactly:
+
+```text
+FRAPPE_AUTHORIZATION=token <api_key>:<api_secret>
+```
+
+If logs show `Frappe rejected API credentials`, the DID/profile routing has already worked and Frappe is rejecting the API key/secret. Regenerate the key/secret for an enabled Frappe user and verify that user can call the `wa_chat_hub` APIs.
 
 ## Agent Endpoint
 

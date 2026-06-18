@@ -1,5 +1,7 @@
 import os
 import json
+from io import BytesIO
+from urllib.error import HTTPError
 
 import pytest
 
@@ -467,6 +469,35 @@ def test_frappe_non_json_response_raises_frappe_error(monkeypatch):
         gateway.frappe_request("GET", "/api/method/test")
     except gateway.FrappeError as exc:
         assert "non-JSON response" in str(exc)
+    else:
+        raise AssertionError("Expected FrappeError")
+
+
+def test_frappe_authentication_error_is_actionable(monkeypatch):
+    body = json.dumps(
+        {
+            "exception": "frappe.exceptions.AuthenticationError",
+            "exc_type": "AuthenticationError",
+            "exc": ["Traceback... validate_api_key_secret ..."],
+        }
+    ).encode("utf-8")
+    error = HTTPError(
+        "https://frappe.example.test/api/method/wa_chat_hub.api.runtime.send_template_message",
+        401,
+        "Unauthorized",
+        {},
+        BytesIO(body),
+    )
+    monkeypatch.setenv("FRAPPE_BASE_URL", "https://frappe.example.test")
+    monkeypatch.setenv("FRAPPE_AUTHORIZATION", "token wrong:key")
+    monkeypatch.setattr(gateway, "urlopen", lambda request, timeout: (_ for _ in ()).throw(error))
+
+    try:
+        gateway.frappe_request("POST", "/api/method/wa_chat_hub.api.runtime.send_template_message", json_body={})
+    except gateway.FrappeError as exc:
+        assert "Frappe rejected API credentials" in str(exc)
+        assert "FRAPPE_AUTHORIZATION" in str(exc)
+        assert "wrong:key" not in str(exc)
     else:
         raise AssertionError("Expected FrappeError")
 

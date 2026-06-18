@@ -341,9 +341,9 @@ def open_circuit(module: str, reason: str) -> None:
 
 
 def frappe_headers() -> dict[str, str]:
-    auth = os.getenv("FRAPPE_AUTHORIZATION", "")
-    api_key = os.getenv("FRAPPE_API_KEY", "")
-    api_secret = os.getenv("FRAPPE_API_SECRET", "")
+    auth = os.getenv("FRAPPE_AUTHORIZATION", "").strip()
+    api_key = os.getenv("FRAPPE_API_KEY", "").strip()
+    api_secret = os.getenv("FRAPPE_API_SECRET", "").strip()
     if not auth and api_key and api_secret:
         auth = f"token {api_key}:{api_secret}"
     if auth and not auth.lower().startswith(("token ", "bearer ")):
@@ -378,6 +378,17 @@ def frappe_headers() -> dict[str, str]:
     return headers
 
 
+def frappe_error_message(text: str, path: str) -> str:
+    if "AuthenticationError" in text or "validate_api_key_secret" in text:
+        return (
+            f"Frappe rejected API credentials while calling {path}. "
+            "Check FRAPPE_AUTHORIZATION is exactly 'token <api_key>:<api_secret>', "
+            "or set FRAPPE_API_KEY and FRAPPE_API_SECRET. Verify the key/secret are active "
+            "for a Frappe user with permission to call the wa_chat_hub APIs."
+        )
+    return text[:1000]
+
+
 def frappe_base_url() -> str:
     base_url = os.getenv("FRAPPE_BASE_URL") or os.getenv("FRAPPE_URL") or ""
     if not base_url:
@@ -407,7 +418,7 @@ def frappe_request(method: str, path: str, *, json_body: dict[str, Any] | None =
                 f"Raw: {text[:700]}",
                 exc.code,
             ) from exc
-        raise FrappeError(text[:1000], exc.code) from exc
+        raise FrappeError(frappe_error_message(text, path), exc.code) from exc
     except URLError as exc:
         raise FrappeError(str(exc), None) from exc
     if isinstance(data, dict) and data.get("exc"):
